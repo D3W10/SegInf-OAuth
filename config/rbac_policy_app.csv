@@ -1,0 +1,9 @@
+p, free, milestones, read
+
+p, premium, milestones, read
+p, premium, calendar, write
+
+p, admin, milestones, read
+p, admin, calendar, write
+
+g, danyribeironunes15@gmail.com, admin
