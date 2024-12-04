@@ -4,23 +4,44 @@ import cookieParser from "cookie-parser";
 import axios from "axios";
 import FormData from "form-data";
 // import jwt from "jsonwebtoken";
-import { states, createUser, getUser } from "./data.js";
+import { states, createUser, getUser, ghStates, pdp, setUserGhToken, ghLogout } from "./data.js";
 import "dotenv/config";
 
 const PORT = 3001;
 
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-
-const LOGIN_CALLBACK = "login/callback", DASHBOARD = "dashboard";
+const { CLIENT_ID, CLIENT_SECRET, CLIENT_ID_GITHUB, CLIENT_SECRET_GITHUB } = process.env;
+const LOGIN_CALLBACK = "login/callback";
+const GITHUB_CALLBACK = "github/callback";
 
 const app = express();
 
 app.use(cookieParser());
 
-app.get("/", (req, res) => res.send("<a href='/login'>Use Google Account</a>"));
+const verifyAccess = async (req, res, next) => {
+    const { path, method } = req;
+    const sessionId = req.cookies.session;
 
-app.get("/login", (req, res) => {
+    if (sessionId) {
+        const user = getUser(sessionId);
+
+        if (user && user.sessionId) {
+            if (!(await pdp(user.role, path, method)))
+                res.status(401).send("Unauthorized");
+            else {
+                req.user = user;
+                next();
+            }
+
+            return;
+        }
+    }
+
+    res.redirect("/");
+}
+
+app.get("/", (_, res) => res.send("<a href='/login'>Use Google Account</a>"));
+
+app.get("/login", (_, res) => {
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     const state = crypto.randomBytes(16).toString("hex");
     
@@ -63,7 +84,7 @@ app.get(`/${LOGIN_CALLBACK}`, async (req, res) => {
             const sessionId = await createUser(userInfo.data, gAuth.data.access_token, gAuth.data.refresh_token);
 
             res.cookie("session", sessionId);
-            res.redirect(`/${DASHBOARD}`);
+            res.redirect("/dashboard");
         }
         catch (error) {
             console.log(error);
@@ -72,26 +93,80 @@ app.get(`/${LOGIN_CALLBACK}`, async (req, res) => {
     }
 });
 
-app.get(`/${DASHBOARD}`, async (req, res) => {
-    const sessionId = req.cookies.session;
+app.get("/dashboard", verifyAccess, async (req, res) => {
+    const { user } = req;
 
-    if (!sessionId)
-        res.redirect("/");
+    res.send(`
+        <div style="margin-bottom: 2rem; display: flex;">
+            <img src="${user.picture}" style="margin-right: 1rem; border-radius: 1rem;" />
+            <div>
+                <p style="margin: 0 0 0.5rem 0;">Hello <b>${user.name} (${user.email})</b></p>
+                <p style="margin: 0;">Your role is: <b>${user.role}</b></p>
+            </div>
+        </div>
+        <form action="/milestones">
+            <input type="text" name="repo" placeholder="Repository URL" style="width: 20rem;" />
+            ${!user.ghToken ? `
+                <a href="/github" style="margin-left: 0.5rem;">Login with GitHub</a>
+            ` : ""}
+            <input type="submit" style="display: block; margin-top: 0.5rem;" />
+        </form>
+        <a href="/logout" style="display: block; margin-top: 3rem;">Logout</a>
+        ${user.ghToken ? `
+            <a href="/logout/github" style="display: block; margin-top: 0.5rem;">Logout GitHub</a>
+        ` : ""}
+    `);
+});
+
+app.get("/github", verifyAccess, (_, res) => {
+    const authUrl = new URL("https://github.com/login/oauth/authorize");
+    const state = crypto.randomBytes(16).toString("hex");
+    
+    authUrl.searchParams.set("client_id", CLIENT_ID_GITHUB);
+    authUrl.searchParams.set("redirect_uri", `http://localhost:${PORT}/${GITHUB_CALLBACK}`);
+    authUrl.searchParams.set("scope", "repo");
+    authUrl.searchParams.set("state", state);
+
+    ghStates.add(state);
+
+    res.redirect(authUrl.toString());
+});
+
+app.get(`/${GITHUB_CALLBACK}`, verifyAccess, async (req, res) => {
+    const { state, code } = req.query;
+
+    if (!ghStates.has(state))
+        res.send("<p>Invalid state</p>");
     else {
-        const user = getUser(sessionId);
+        ghStates.delete(state);
 
-        if (!user || !user.sessionId)
-            res.redirect("/");
-        else {
-            res.send(`
-                <p style="margin: 0 0 0.5rem 0;">Hello <b>${user.email}</b></p>
-                <p style="margin: 0 0 3rem 0;">Your role is: <b>${user.role}</b></p>
-                <a href="/milestones" style="display: block; margin-bottom: 0.5rem;">Milestones</a>
-                <a href="/calendar" style="display: block; margin-bottom: 3rem;">Calendar</a>
-                <a href="/logout">Logout</a>
-            `);
+        const body = JSON.stringify({
+            code,
+            client_id: CLIENT_ID_GITHUB,
+            client_secret: CLIENT_SECRET_GITHUB,
+            redirect_uri: `http://localhost:${PORT}/${GITHUB_CALLBACK}`
+        });
+
+        try {
+            const ghAuth = await axios.post("https://github.com/login/oauth/access_token", body, { headers: { "Accept": "application/json", "Content-Type": "application/json" } });
+            setUserGhToken(req.cookies.session, ghAuth.data.access_token);
+
+            res.redirect("/dashboard");
+        }
+        catch (error) {
+            console.log(error);
+            res.send("Server error");
         }
     }
+});
+app.get("/logout", verifyAccess, (_, res) => {
+    res.clearCookie("session");
+    res.redirect("/");
+});
+
+app.get("/logout/github", verifyAccess, (req, res) => {
+    ghLogout(req.cookies.session);
+    res.redirect("/dashboard");
 });
 
 app.listen(PORT, err => {

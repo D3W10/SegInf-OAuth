@@ -1,9 +1,12 @@
-p, free, milestones, read
+g, admin, premium
+g, premium, free
 
-p, premium, milestones, read
-p, premium, calendar, write
-
-p, admin, milestones, read
-p, admin, calendar, write
+p, free, /dashboard, GET
+p, free, /github, GET
+p, free, /github/callback, GET
+p, free, /milestones, GET
+p, free, /logout, GET
+p, free, /logout/github, GET
+p, premium, /calendar, POST
 
 g, danyribeironunes15@gmail.com, admin
