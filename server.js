@@ -174,7 +174,7 @@ app.get("/milestones", verifyAccess, async (req, res) => {
     else {
         try {
             const ghMilestones = await axios.get(`https://api.github.com/repos/${linkPieces[1]}/${linkPieces[2]}/milestones`, { headers: { "Accept": "application/vnd.github+json", "Authorization": req.user.ghToken ? `Bearer ${req.user.ghToken}` : undefined } });
-            const dateFormatter = new Intl.DateTimeFormat("en-US", { dateStyle: "long", timeStyle: "short" });
+            const formatDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 
             res.send(`
                 <h1>Milestones for ${linkPieces[1]}/${linkPieces[2]}</h1>
@@ -183,11 +183,11 @@ app.get("/milestones", verifyAccess, async (req, res) => {
                         <form method="POST" action="../calendar">
                             <h2 style="margin: 0 0 0.5rem 0;">${m.title}</h2>
                             <p style="margin: 0 0 0.5rem 0;">${m.description}</p>
-                            <p style="margin: 0;"><b>Due on:</b> ${m.due_on != null ? dateFormatter.format(new Date(m.due_on)) : "No due date"}</p>
+                            <p style="margin: 0;"><b>Due on:</b> ${m.due_on != null ? (new Date(m.due_on)).toLocaleDateString() : "No due date"}</p>
                             ${req.user.role != "free" && m.due_on != null ? `
                                 <input type="hidden" name="name" value="${m.title}" />
                                 <input type="hidden" name="description" value="${m.description}" />
-                                <input type="hidden" name="date" value="${m.due_on}" />
+                                <input type="hidden" name="date" value="${formatDate(new Date(m.due_on))}" />
                                 <input type="hidden" name="repo" value="${repo}" />
                                 <input type="submit" value="Add to calendar" style="margin-top: 1rem;" />
                             ` : ""}
@@ -214,19 +214,16 @@ app.post("/calendar", verifyAccess, async (req, res) => {
         return;
     }
 
-    const endDate = new Date(date);
-    endDate.setTime(endDate.getTime() + 3600000);
-
     try {
         await axios.post("https://www.googleapis.com/calendar/v3/calendars/primary/events", {
             summary: name,
-            description: description,
+            description,
             start: {
-                dateTime: date,
+                date,
                 timeZone: "Europe/Lisbon"
             },
             end: {
-                dateTime: endDate.toISOString(),
+                date,
                 timeZone: "Europe/Lisbon"
             }
         }, {
